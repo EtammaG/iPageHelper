@@ -3,6 +3,7 @@ package com.etammag.ipagehelper;
 import com.google.auto.service.AutoService;
 import com.sun.source.util.Trees;
 import com.sun.tools.javac.code.Flags;
+import com.sun.tools.javac.code.TypeTag;
 import com.sun.tools.javac.processing.JavacProcessingEnvironment;
 import com.sun.tools.javac.tree.JCTree;
 import com.sun.tools.javac.tree.TreeMaker;
@@ -46,7 +47,6 @@ public class PageProcessor extends AbstractProcessor {
         for (TypeElement typeElement : annotations) {
             roundEnv.getElementsAnnotatedWith(typeElement).forEach(element -> {
                 if (element.getKind().isInterface()) {
-//                    ((JCTree) trees.getPath(element).getParentPath().getCompilationUnit()).accept(new ImportTranslator());
                     ((JCTree) trees.getTree(element)).accept(new InterfaceTranslator());
                 }
             });
@@ -66,35 +66,29 @@ public class PageProcessor extends AbstractProcessor {
                             typeUtils.erasure(jcMethodDecl.getReturnType().type),
                             typeUtils.erasure(elementUtils.getTypeElement("java.util.List").asType())
                     )) continue;
-                    jcClassDecl.defs = jcClassDecl.defs.append(generate(jcMethodDecl));
+                    jcClassDecl.defs = jcClassDecl.defs.append(generatePage(jcMethodDecl));
+                    jcClassDecl.defs = jcClassDecl.defs.append(generateCount(jcMethodDecl));
                 }
             }
         }
 
-        private JCTree.JCMethodDecl generate(JCTree.JCMethodDecl jcMethodDecl) {
+        private JCTree.JCMethodDecl generatePage(JCTree.JCMethodDecl jcMethodDecl) {
             JCTree.JCModifiers modifiers = treeMaker.Modifiers(Flags.DEFAULT);
-            JCTree.JCExpression returnType = treeMaker.TypeApply(
-                    memberAccess("com.etammag.ipagehelper.IPageInfo"),
-                    List.of(((JCTree.JCTypeApply) jcMethodDecl.getReturnType()).arguments.head)
-            );
-
-            Name name = jcMethodDecl.getName();
-//            Name name = names.fromString(jcMethodDecl.getName().toString() + "P");
+            JCTree.JCExpression returnType = jcMethodDecl.restype;
+            Name name = names.fromString(jcMethodDecl.getName().toString() + "Page");
             List<JCTree.JCVariableDecl> parameters = List.nil();
             JCTree.JCVariableDecl iPage = treeMaker.VarDef(
                     treeMaker.Modifiers(Flags.PARAMETER),
                     names.fromString("iPage"),
-                    memberAccess("com.etammag.ipagehelper.IPage"),
+                    memberAccess("com.github.pagehelper.IPage"),
                     null
             );
 
             parameters = parameters.appendList(jcMethodDecl.getParameters());
             iPage.pos = jcMethodDecl.pos;
             parameters = parameters.append(iPage);
-            List<JCTree.JCExpression> throwsClauses = List.nil();
-            if (jcMethodDecl.getThrows() != null) {
-                throwsClauses.appendList(jcMethodDecl.getThrows());
-            }
+            List<JCTree.JCExpression> throwsClauses = jcMethodDecl.getThrows();
+
             JCTree.JCExpression exp1 = treeMaker.Apply(
                     List.nil(),
                     treeMaker.Select(
@@ -133,7 +127,6 @@ public class PageProcessor extends AbstractProcessor {
             for (JCTree.JCVariableDecl jcVariableDecl : jcMethodDecl.getParameters()) {
                 params = params.append(treeMaker.Ident(jcVariableDecl.name));
             }
-
             JCTree.JCExpression exp2 = treeMaker.Apply(
                     List.nil(),
                     treeMaker.Select(
@@ -143,33 +136,55 @@ public class PageProcessor extends AbstractProcessor {
                     params
             );
 
-            JCTree.JCExpression exp3 = treeMaker.Apply(
+            List<JCTree.JCStatement> jcStatementList = List.nil();
+            jcStatementList = jcStatementList.append(treeMaker.Exec(exp1));
+            jcStatementList = jcStatementList.append(treeMaker.Return(exp2));
+            JCTree.JCBlock block = treeMaker.Block(0, jcStatementList);
+
+            return treeMaker.MethodDef(
+                    modifiers,
+                    name,
+                    returnType,
+                    List.nil(),
+                    parameters,
+                    throwsClauses,
+                    block,
+                    null
+            );
+        }
+
+        private JCTree generateCount(JCTree.JCMethodDecl jcMethodDecl) {
+            JCTree.JCModifiers modifiers = treeMaker.Modifiers(Flags.DEFAULT);
+            JCTree.JCExpression returnType = treeMaker.TypeIdent(TypeTag.LONG);
+            Name name = names.fromString(jcMethodDecl.getName().toString() + "Count");
+            List<JCTree.JCVariableDecl> parameters = jcMethodDecl.getParameters();
+            List<JCTree.JCExpression> throwsClauses = jcMethodDecl.getThrows();
+
+            List<JCTree.JCExpression> params = List.nil();
+            for (JCTree.JCVariableDecl jcVariableDecl : jcMethodDecl.getParameters()) {
+                params = params.append(treeMaker.Ident(jcVariableDecl.name));
+            }
+            JCTree.JCExpression exp1 = treeMaker.Apply(
                     List.nil(),
                     treeMaker.Select(
-                            exp1,
-                            names.fromString("doSelectPageInfo")
+                            memberAccess("com.github.pagehelper.PageHelper"),
+                            names.fromString("count")
                     ),
                     List.of(treeMaker.Lambda(
                             List.nil(),
-                            exp2
+                            treeMaker.Apply(
+                                    List.nil(),
+                                    treeMaker.Select(
+                                            treeMaker.Ident(names.fromString("this")),
+                                            jcMethodDecl.getName()
+                                    ),
+                                    params
+                            )
                     ))
             );
 
-            JCTree.JCExpression exp4 = treeMaker.NewClass(
-                    null,
-                    List.nil(),
-                    treeMaker.TypeApply(
-                            memberAccess("com.etammag.ipagehelper.IPageInfo"),
-                            List.of(((JCTree.JCTypeApply) jcMethodDecl.getReturnType()).arguments.head)
-                    ),
-                    List.of(exp3),
-                    null
-            );
-
-            JCTree.JCReturn result = treeMaker.Return(exp4);
-
             List<JCTree.JCStatement> jcStatementList = List.nil();
-            jcStatementList = jcStatementList.append(result);
+            jcStatementList = jcStatementList.append(treeMaker.Return(exp1));
             JCTree.JCBlock block = treeMaker.Block(0, jcStatementList);
 
             return treeMaker.MethodDef(
@@ -193,40 +208,5 @@ public class PageProcessor extends AbstractProcessor {
         }
         return expr;
     }
-
-//    private class ImportTranslator extends TreeTranslator {
-//        @Override
-//        public void visitTopLevel(JCTree.JCCompilationUnit jcCompilationUnit) {
-//            super.visitTopLevel(jcCompilationUnit);
-//            jcCompilationUnit.defs = jcCompilationUnit.defs.prepend(
-//                    treeMaker.Import(
-//                            treeMaker.Select(
-//                                    treeMaker.Ident(names.fromString("com.github.pagehelper")),
-//                                    names.fromString("PageHelper")
-//                            ),
-//                            false
-//                    )
-//            );
-//            jcCompilationUnit.defs = jcCompilationUnit.defs.prepend(
-//                    treeMaker.Import(
-//                            treeMaker.Select(
-//                                    treeMaker.Ident(names.fromString("com.github.pagehelper")),
-//                                    names.fromString("PageInfo")
-//                            ),
-//                            false
-//                    )
-//            );
-//            jcCompilationUnit.defs = jcCompilationUnit.defs.prepend(
-//                    treeMaker.Import(
-//                            treeMaker.Select(
-//                                    treeMaker.Ident(names.fromString("com.github.pagehelper")),
-//                                    names.fromString("IPage")
-//                            ),
-//                            false
-//                    )
-//            );
-//            System.out.println(jcCompilationUnit.defs);
-//        }
-//    }
 
 }
